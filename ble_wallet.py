@@ -190,14 +190,14 @@ def main():
             bus,
             STATE_CHAR_UUID,
             ["read"],
-            service.get_path(),
+            service.path,
             "/org/bluez/example/service0/char0"
         )
         switch_char = WriteCharacteristic(
             bus,
             SWITCH_CHAR_UUID,
             ["write"],
-            service.get_path(),
+            service.path,
             "/org/bluez/example/service0/char1"
         )
         
@@ -213,7 +213,7 @@ def main():
 
         print("📝 Registering application...")
         gatt_mgr.RegisterApplication(
-            dbus.ObjectPath(app.get_path()),
+            dbus.ObjectPath(app.path),
             {},
             timeout=10000
         )
@@ -221,7 +221,7 @@ def main():
 
         print("📝 Registering advertisement...")
         adv_mgr.RegisterAdvertisement(
-            dbus.ObjectPath(adv.get_path()),
+            dbus.ObjectPath(adv.path),
             {},
             timeout=10000
         )
