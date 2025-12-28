@@ -25,41 +25,29 @@ class Advertisement(dbus.service.Object):
         self.bus = bus
         super().__init__(bus, self.path)
 
-    @dbus.service.method(DBUS_OM_IFACE, out_signature="a{oa{sa{sv}}}")
-    def GetManagedObjects(self):
-        return {}
+    @dbus.service.method(
+        "org.freedesktop.DBus.Properties",
+        in_signature="s",
+        out_signature="a{sv}",
+    )
+    def GetAll(self, interface):
+        if interface != "org.bluez.LEAdvertisement1":
+            return {}
 
-    @dbus.service.method("org.bluez.LEAdvertisement1",
-                         in_signature="", out_signature="")
+        return {
+            "Type": "peripheral",
+            "ServiceUUIDs": dbus.Array([SERVICE_UUID], signature="s"),
+            "LocalName": "NFC-Wallet-Dev",
+            "Includes": dbus.Array(["tx-power"], signature="s"),
+        }
+
+    @dbus.service.method(
+        "org.bluez.LEAdvertisement1",
+        in_signature="",
+        out_signature="",
+    )
     def Release(self):
         print("Advertisement released")
-
-    @dbus.service.method(dbus.PROPERTIES_IFACE,
-                         in_signature="ss", out_signature="v")
-    def Get(self, interface_name, property_name):
-        if interface_name == "org.bluez.LEAdvertisement1":
-            if property_name == "Type":
-                return "peripheral"
-            elif property_name == "ServiceUUIDs":
-                return [SERVICE_UUID]
-            elif property_name == "LocalName":
-                return "NFC-Wallet-Dev"
-            elif property_name == "Includes":
-                return ["tx-power"]
-        raise dbus.exceptions.DBusException(
-            "Property {} not found".format(property_name))
-
-    @dbus.service.method(dbus.PROPERTIES_IFACE,
-                         in_signature="s", out_signature="a{sv}")
-    def GetAll(self, interface_name):
-        if interface_name == "org.bluez.LEAdvertisement1":
-            return {
-                "Type": "peripheral",
-                "ServiceUUIDs": [SERVICE_UUID],
-                "LocalName": "NFC-Wallet-Dev",
-                "Includes": ["tx-power"]
-            }
-        return {}
 
 # ---------- GATT ----------
 
