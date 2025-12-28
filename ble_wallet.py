@@ -21,11 +21,10 @@ active_card = "Office"
 # -------------------------------------------------
 
 class Advertisement(dbus.service.Object):
-    PATH_BASE = "/org/bluez/example/advertisement"
+    PATH = "/org/bluez/example/advertisement0"
 
-    def __init__(self, bus, index):
-        self.path = self.PATH_BASE + str(index)
-        super().__init__(bus, self.path)
+    def __init__(self, bus):
+        super().__init__(bus, self.PATH)
 
     @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
@@ -36,7 +35,6 @@ class Advertisement(dbus.service.Object):
             "Type": "peripheral",
             "ServiceUUIDs": dbus.Array([SERVICE_UUID], signature="s"),
             "LocalName": "NFC-Wallet-Dev",
-            "Includes": dbus.Array(["tx-power"], signature="s"),
         }
 
     @dbus.service.method("org.bluez.LEAdvertisement1")
@@ -44,57 +42,62 @@ class Advertisement(dbus.service.Object):
         print("Advertisement released")
 
 # -------------------------------------------------
-# GATT Application
+# Application
 # -------------------------------------------------
 
 class Application(dbus.service.Object):
+    PATH = "/org/bluez/example/app"
+
     def __init__(self, bus):
-        self.path = "/"
         self.services = []
-        super().__init__(bus, self.path)
+        super().__init__(bus, self.PATH)
 
     def add_service(self, service):
         self.services.append(service)
 
     @dbus.service.method(DBUS_OM_IFACE, out_signature="a{oa{sa{sv}}}")
     def GetManagedObjects(self):
-        response = {}
+        objects = {}
         for service in self.services:
-            response[service.path] = service.get_properties()
+            objects[service.path] = service.get_properties()
             for ch in service.characteristics:
-                response[ch.path] = ch.get_properties()
-        return response
+                objects[ch.path] = ch.get_properties()
+        return objects
 
 # -------------------------------------------------
-# GATT Service
+# Service
 # -------------------------------------------------
 
 class Service(dbus.service.Object):
-    def __init__(self, bus, index):
-        self.path = f"/org/bluez/example/service{index}"
+    def __init__(self, bus):
+        self.path = "/org/bluez/example/service0"
         self.uuid = SERVICE_UUID
         self.primary = True
         self.characteristics = []
         super().__init__(bus, self.path)
 
-    def add_characteristic(self, char):
-        self.characteristics.append(char)
+    def add_characteristic(self, ch):
+        self.characteristics.append(ch)
 
     def get_properties(self):
         return {
             "org.bluez.GattService1": {
                 "UUID": self.uuid,
                 "Primary": self.primary,
+                "Characteristics": dbus.Array(
+                    [c.path for c in self.characteristics],
+                    signature="o"
+                ),
             }
         }
 
 # -------------------------------------------------
-# GATT Characteristic Base
+# Characteristic Base
 # -------------------------------------------------
 
 class Characteristic(dbus.service.Object):
     def __init__(self, bus, index, uuid, flags, service):
-        self.path = service.path + f"/char{index}"
+        self.path = f"{service.path}/char{index}"
         self.uuid = uuid
         self.flags = flags
         self.service = service.path
@@ -123,11 +126,11 @@ class StateCharacteristic(Characteristic):
         out_signature="ay",
     )
     def ReadValue(self, options):
-        data = json.dumps({
+        payload = json.dumps({
             "activeCard": active_card,
             "battery": 87
         }).encode()
-        return dbus.Array([dbus.Byte(b) for b in data], signature="y")
+        return dbus.Array([dbus.Byte(b) for b in payload], signature="y")
 
 class SwitchCharacteristic(Characteristic):
     def __init__(self, bus, service):
@@ -140,8 +143,7 @@ class SwitchCharacteristic(Characteristic):
     )
     def WriteValue(self, value, options):
         global active_card
-        payload = bytes(value).decode()
-        data = json.loads(payload)
+        data = json.loads(bytes(value).decode())
         active_card = data["card"]
         print("Switched to:", active_card)
 
@@ -153,9 +155,10 @@ def find_adapter(bus):
     om = dbus.Interface(bus.get_object(BLUEZ_SERVICE_NAME, "/"), DBUS_OM_IFACE)
     objects = om.GetManagedObjects()
     for path, ifaces in objects.items():
-        if GATT_MANAGER_IFACE in ifaces:
+        if (GATT_MANAGER_IFACE in ifaces and
+            LE_ADV_MANAGER_IFACE in ifaces):
             return path
-    raise Exception("BLE adapter not found")
+    raise Exception("No BLE adapter found")
 
 # -------------------------------------------------
 # Main
@@ -168,31 +171,28 @@ def main():
     adapter = find_adapter(bus)
 
     app = Application(bus)
-    service = Service(bus, 0)
+    service = Service(bus)
 
-    state_char = StateCharacteristic(bus, service)
-    switch_char = SwitchCharacteristic(bus, service)
-
-    service.add_characteristic(state_char)
-    service.add_characteristic(switch_char)
+    service.add_characteristic(StateCharacteristic(bus, service))
+    service.add_characteristic(SwitchCharacteristic(bus, service))
     app.add_service(service)
 
-    adv = Advertisement(bus, 0)
+    adv = Advertisement(bus)
 
-    service_manager = dbus.Interface(
+    gatt_mgr = dbus.Interface(
         bus.get_object(BLUEZ_SERVICE_NAME, adapter),
         GATT_MANAGER_IFACE,
     )
 
-    adv_manager = dbus.Interface(
+    adv_mgr = dbus.Interface(
         bus.get_object(BLUEZ_SERVICE_NAME, adapter),
         LE_ADV_MANAGER_IFACE,
     )
 
-    service_manager.RegisterApplication(app.path, {})
-    adv_manager.RegisterAdvertisement(adv.path, {})
+    gatt_mgr.RegisterApplication(app.PATH, {})
+    adv_mgr.RegisterAdvertisement(adv.PATH, {})
 
-    print("✅ NFC-Wallet-Dev advertising & GATT ready")
+    print("✅ NFC-Wallet-Dev is advertising")
     GLib.MainLoop().run()
 
 if __name__ == "__main__":
