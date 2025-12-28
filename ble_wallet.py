@@ -70,7 +70,7 @@ class Application(dbus.service.Object):
 
 class Service(dbus.service.Object):
     def __init__(self, bus):
-        self.path = "/org/bluez/example/service0"
+        self.path = f"{Application.PATH}/service0"
         self.uuid = SERVICE_UUID
         self.primary = True
         self.characteristics = []
