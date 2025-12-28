@@ -34,21 +34,32 @@ class Advertisement(dbus.service.Object):
     def Release(self):
         print("Advertisement released")
 
-    @dbus.service.property("org.bluez.LEAdvertisement1")
-    def Type(self):
-        return "peripheral"
+    @dbus.service.method(dbus.PROPERTIES_IFACE,
+                         in_signature="ss", out_signature="v")
+    def Get(self, interface_name, property_name):
+        if interface_name == "org.bluez.LEAdvertisement1":
+            if property_name == "Type":
+                return "peripheral"
+            elif property_name == "ServiceUUIDs":
+                return [SERVICE_UUID]
+            elif property_name == "LocalName":
+                return "NFC-Wallet-Dev"
+            elif property_name == "Includes":
+                return ["tx-power"]
+        raise dbus.exceptions.DBusException(
+            "Property {} not found".format(property_name))
 
-    @dbus.service.property("org.bluez.LEAdvertisement1")
-    def ServiceUUIDs(self):
-        return [SERVICE_UUID]
-
-    @dbus.service.property("org.bluez.LEAdvertisement1")
-    def LocalName(self):
-        return "NFC-Wallet-Dev"
-
-    @dbus.service.property("org.bluez.LEAdvertisement1")
-    def Includes(self):
-        return ["tx-power"]
+    @dbus.service.method(dbus.PROPERTIES_IFACE,
+                         in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface_name):
+        if interface_name == "org.bluez.LEAdvertisement1":
+            return {
+                "Type": "peripheral",
+                "ServiceUUIDs": [SERVICE_UUID],
+                "LocalName": "NFC-Wallet-Dev",
+                "Includes": ["tx-power"]
+            }
+        return {}
 
 # ---------- GATT ----------
 
