@@ -10,13 +10,95 @@ GATT_MANAGER_IFACE = "org.bluez.GattManager1"
 LE_ADV_MANAGER_IFACE = "org.bluez.LEAdvertisingManager1"
 DBUS_OM_IFACE = "org.freedesktop.DBus.ObjectManager"
 DBUS_PROP_IFACE = "org.freedesktop.DBus.Properties"
-DBUS_INTROSPECTABLE_IFACE = "org.freedesktop.DBus.Introspectable"
 
 SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
 STATE_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"
 SWITCH_CHAR_UUID = "6e400004-b5a3-f393-e0a9-e50e24dcca9e"
 
 active_card = "Office"
+
+# Introspection XML for proper DBus interface exposure
+ADAPTER_INTROSPECT = """
+<node>
+    <interface name="org.freedesktop.DBus.ObjectManager">
+        <method name="GetManagedObjects">
+            <arg type="a{oa{sa{sv}}}" direction="out"/>
+        </method>
+    </interface>
+</node>
+"""
+
+SERVICE_INTROSPECT = """
+<node>
+    <interface name="org.bluez.GattService1">
+        <property name="UUID" type="s" access="read"/>
+        <property name="Primary" type="b" access="read"/>
+        <property name="Characteristics" type="ao" access="read"/>
+    </interface>
+    <interface name="org.freedesktop.DBus.Properties">
+        <method name="Get">
+            <arg type="s" direction="in"/>
+            <arg type="s" direction="in"/>
+            <arg type="v" direction="out"/>
+        </method>
+        <method name="GetAll">
+            <arg type="s" direction="in"/>
+            <arg type="a{sv}" direction="out"/>
+        </method>
+    </interface>
+</node>
+"""
+
+CHAR_INTROSPECT = """
+<node>
+    <interface name="org.bluez.GattCharacteristic1">
+        <method name="ReadValue">
+            <arg type="a{sv}" direction="in"/>
+            <arg type="ay" direction="out"/>
+        </method>
+        <method name="WriteValue">
+            <arg type="ay" direction="in"/>
+            <arg type="a{sv}" direction="in"/>
+        </method>
+        <property name="UUID" type="s" access="read"/>
+        <property name="Service" type="o" access="read"/>
+        <property name="Flags" type="as" access="read"/>
+    </interface>
+    <interface name="org.freedesktop.DBus.Properties">
+        <method name="Get">
+            <arg type="s" direction="in"/>
+            <arg type="s" direction="in"/>
+            <arg type="v" direction="out"/>
+        </method>
+        <method name="GetAll">
+            <arg type="s" direction="in"/>
+            <arg type="a{sv}" direction="out"/>
+        </method>
+    </interface>
+</node>
+"""
+
+ADV_INTROSPECT = """
+<node>
+    <interface name="org.bluez.LEAdvertisement1">
+        <method name="Release"/>
+        <property name="Type" type="s" access="read"/>
+        <property name="ServiceUUIDs" type="as" access="read"/>
+        <property name="LocalName" type="s" access="read"/>
+    </interface>
+    <interface name="org.freedesktop.DBus.Properties">
+        <method name="Get">
+            <arg type="s" direction="in"/>
+            <arg type="s" direction="in"/>
+            <arg type="v" direction="out"/>
+        </method>
+        <method name="GetAll">
+            <arg type="s" direction="in"/>
+            <arg type="a{sv}" direction="out"/>
+        </method>
+    </interface>
+</node>
+"""
 
 # -------------------------------------------------
 # Advertisement
@@ -28,18 +110,23 @@ class Advertisement(dbus.service.Object):
     def __init__(self, bus):
         super().__init__(bus, self.PATH)
 
+    @dbus.service.method(DBUS_PROP_IFACE, in_signature="ss", out_signature="v")
+    def Get(self, interface, prop):
+        props = self.GetAll(interface)
+        return props.get(prop)
+
     @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
         if interface != "org.bluez.LEAdvertisement1":
-            return {}
+            raise dbus.exceptions.DBusException(f"Unknown interface: {interface}")
 
         return {
-            "Type": "peripheral",
-            "ServiceUUIDs": dbus.Array([SERVICE_UUID], signature="s"),
-            "LocalName": "NFC-Wallet-Dev",
+            "Type": dbus.String("peripheral"),
+            "ServiceUUIDs": dbus.Array([dbus.String(SERVICE_UUID)], signature="s"),
+            "LocalName": dbus.String("NFC-Wallet-Dev"),
         }
 
-    @dbus.service.method("org.bluez.LEAdvertisement1")
+    @dbus.service.method("org.bluez.LEAdvertisement1", in_signature="", out_signature="")
     def Release(self):
         print("Advertisement released")
 
@@ -54,11 +141,6 @@ class Application(dbus.service.Object):
         self.bus = bus
         self.services = []
         super().__init__(bus, self.PATH)
-        self.add_to_path_table()
-
-    def add_to_path_table(self):
-        """Register this object with the path table"""
-        pass
 
     def add_service(self, service):
         self.services.append(service)
@@ -67,14 +149,10 @@ class Application(dbus.service.Object):
     def GetManagedObjects(self):
         objects = {}
         for service in self.services:
-            objects[service.path] = service.get_properties()
+            objects[dbus.ObjectPath(service.path)] = service.get_properties()
             for ch in service.characteristics:
-                objects[ch.path] = ch.get_properties()
+                objects[dbus.ObjectPath(ch.path)] = ch.get_properties()
         return objects
-
-    @dbus.service.method(DBUS_INTROSPECTABLE_IFACE, out_signature="s")
-    def Introspect(self):
-        return self._introspect_xml()
 
 # -------------------------------------------------
 # Service
@@ -104,11 +182,17 @@ class Service(dbus.service.Object):
             }
         }
     
+    @dbus.service.method(DBUS_PROP_IFACE, in_signature="ss", out_signature="v")
+    def Get(self, interface, prop):
+        if interface == "org.bluez.GattService1":
+            return self.get_properties()["org.bluez.GattService1"].get(prop)
+        raise dbus.exceptions.DBusException(f"Unknown interface: {interface}")
+    
     @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
         if interface == "org.bluez.GattService1":
             return self.get_properties()["org.bluez.GattService1"]
-        return {}
+        raise dbus.exceptions.DBusException(f"Unknown interface: {interface}")
 
 # -------------------------------------------------
 # Characteristic Base
@@ -127,7 +211,7 @@ class Characteristic(dbus.service.Object):
         return {
             "org.bluez.GattCharacteristic1": {
                 "UUID": dbus.String(self.uuid),
-                "Flags": dbus.Array(self.flags, signature="s"),
+                "Flags": dbus.Array([dbus.String(f) for f in self.flags], signature="s"),
                 "Service": dbus.ObjectPath(self.service),
                 "Notifying": dbus.Boolean(False),
                 "Descriptors": dbus.Array([], signature="o"),
@@ -137,9 +221,14 @@ class Characteristic(dbus.service.Object):
     @dbus.service.method(DBUS_PROP_IFACE, in_signature="ss", out_signature="v")
     def Get(self, interface, prop):
         if interface == "org.bluez.GattCharacteristic1":
-            props = self.get_properties()["org.bluez.GattCharacteristic1"]
-            return props.get(prop)
-        raise dbus.exceptions.DBusException("Unknown property")
+            return self.get_properties()["org.bluez.GattCharacteristic1"].get(prop)
+        raise dbus.exceptions.DBusException(f"Unknown interface: {interface}")
+    
+    @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface):
+        if interface == "org.bluez.GattCharacteristic1":
+            return self.get_properties()["org.bluez.GattCharacteristic1"]
+        raise dbus.exceptions.DBusException(f"Unknown interface: {interface}")
 
 # -------------------------------------------------
 # Characteristics
@@ -160,12 +249,6 @@ class StateCharacteristic(Characteristic):
             "battery": 87
         }).encode()
         return dbus.Array([dbus.Byte(b) for b in payload], signature="y")
-    
-    @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
-    def GetAll(self, interface):
-        if interface == "org.bluez.GattCharacteristic1":
-            return self.get_properties()["org.bluez.GattCharacteristic1"]
-        return {}
 
 class SwitchCharacteristic(Characteristic):
     def __init__(self, bus, service):
@@ -178,15 +261,12 @@ class SwitchCharacteristic(Characteristic):
     )
     def WriteValue(self, value, options):
         global active_card
-        data = json.loads(bytes(value).decode())
-        active_card = data["card"]
-        print("Switched to:", active_card)
-    
-    @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
-    def GetAll(self, interface):
-        if interface == "org.bluez.GattCharacteristic1":
-            return self.get_properties()["org.bluez.GattCharacteristic1"]
-        return {}
+        try:
+            data = json.loads(bytes(value).decode())
+            active_card = data.get("card", active_card)
+            print(f"✅ Switched to: {active_card}")
+        except Exception as e:
+            print(f"❌ Failed to parse write value: {e}")
 
 # -------------------------------------------------
 # Helpers
@@ -217,15 +297,23 @@ def main():
         sys.exit(1)
 
     try:
+        # Create application and service hierarchy
         app = Application(bus)
         service = Service(bus)
 
-        service.add_characteristic(StateCharacteristic(bus, service))
-        service.add_characteristic(SwitchCharacteristic(bus, service))
+        # Add characteristics to service
+        state_char = StateCharacteristic(bus, service)
+        switch_char = SwitchCharacteristic(bus, service)
+        service.add_characteristic(state_char)
+        service.add_characteristic(switch_char)
+        
+        # Add service to application
         app.add_service(service)
 
+        # Create advertisement
         adv = Advertisement(bus)
 
+        # Get GATT and advertising managers
         gatt_mgr = dbus.Interface(
             bus.get_object(BLUEZ_SERVICE_NAME, adapter),
             GATT_MANAGER_IFACE,
@@ -236,14 +324,22 @@ def main():
             LE_ADV_MANAGER_IFACE,
         )
 
-        # Register the GATT application
+        # Register the GATT application with extended timeout
         print(f"📝 Registering GATT application at {app.PATH}...")
-        gatt_mgr.RegisterApplication(app.PATH, {})
+        gatt_mgr.RegisterApplication(
+            dbus.ObjectPath(app.PATH), 
+            {}, 
+            timeout=5000  # 5 second timeout
+        )
         print("✅ GATT application registered")
 
         # Register the advertisement
         print(f"📝 Registering advertisement at {adv.PATH}...")
-        adv_mgr.RegisterAdvertisement(adv.PATH, {})
+        adv_mgr.RegisterAdvertisement(
+            dbus.ObjectPath(adv.PATH), 
+            {}, 
+            timeout=5000  # 5 second timeout
+        )
         print("✅ Advertisement registered")
 
         print("🔊 NFC-Wallet-Dev is advertising")
