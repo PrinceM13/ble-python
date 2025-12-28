@@ -1,7 +1,4 @@
 #!/usr/bin/env python3
-"""
-Minimal BLE GATT server implementation for Raspberry Pi
-"""
 
 import dbus
 import dbus.service
@@ -24,14 +21,11 @@ active_card = "Office"
 
 
 class Characteristic(dbus.service.Object):
-    """GATT Characteristic"""
-    
     def __init__(self, bus, uuid, flags, service_path, char_path):
         self.uuid = uuid
         self.flags = flags
         self.service_path = service_path
-        self.path = char_path
-        super().__init__(bus, self.path)
+        super().__init__(bus, char_path)
 
     def get_properties(self):
         return {
@@ -47,18 +41,16 @@ class Characteristic(dbus.service.Object):
     def Get(self, interface, prop):
         if interface == "org.bluez.GattCharacteristic1":
             return self.get_properties()[interface].get(prop)
-        raise dbus.exceptions.DBusException(f"Unknown property")
+        raise dbus.exceptions.DBusException("Unknown property")
 
     @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
         if interface == "org.bluez.GattCharacteristic1":
             return self.get_properties()[interface]
-        raise dbus.exceptions.DBusException(f"Unknown interface")
+        raise dbus.exceptions.DBusException("Unknown interface")
 
 
 class ReadCharacteristic(Characteristic):
-    """Read-only characteristic"""
-    
     @dbus.service.method(
         "org.bluez.GattCharacteristic1",
         in_signature="a{sv}",
@@ -73,8 +65,6 @@ class ReadCharacteristic(Characteristic):
 
 
 class WriteCharacteristic(Characteristic):
-    """Write-only characteristic"""
-    
     @dbus.service.method(
         "org.bluez.GattCharacteristic1",
         in_signature="aya{sv}",
@@ -87,17 +77,14 @@ class WriteCharacteristic(Characteristic):
             active_card = data.get("card", active_card)
             print(f"✅ Switched to: {active_card}")
         except Exception as e:
-            print(f"❌ Failed to parse write: {e}")
+            print(f"❌ Write error: {e}")
 
 
 class Service(dbus.service.Object):
-    """GATT Service"""
-    
     def __init__(self, bus, service_path, uuid):
-        self.path = service_path
         self.uuid = uuid
         self.characteristics = []
-        super().__init__(bus, self.path)
+        super().__init__(bus, service_path)
 
     def add_char(self, char):
         self.characteristics.append(char)
@@ -108,7 +95,7 @@ class Service(dbus.service.Object):
                 "UUID": dbus.String(self.uuid),
                 "Primary": dbus.Boolean(True),
                 "Characteristics": dbus.Array(
-                    [dbus.ObjectPath(c.path) for c in self.characteristics],
+                    [dbus.ObjectPath(c.get_path()) for c in self.characteristics],
                     signature="o"
                 ),
             }
@@ -118,22 +105,19 @@ class Service(dbus.service.Object):
     def Get(self, interface, prop):
         if interface == "org.bluez.GattService1":
             return self.get_properties()[interface].get(prop)
-        raise dbus.exceptions.DBusException(f"Unknown property")
+        raise dbus.exceptions.DBusException("Unknown property")
 
     @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
     def GetAll(self, interface):
         if interface == "org.bluez.GattService1":
             return self.get_properties()[interface]
-        raise dbus.exceptions.DBusException(f"Unknown interface")
+        raise dbus.exceptions.DBusException("Unknown interface")
 
 
 class Application(dbus.service.Object):
-    """GATT Application"""
-    
     def __init__(self, bus):
-        self.path = "/org/bluez/example"
         self.services = []
-        super().__init__(bus, self.path)
+        super().__init__(bus, "/org/bluez/example")
 
     def add_service(self, service):
         self.services.append(service)
@@ -142,18 +126,15 @@ class Application(dbus.service.Object):
     def GetManagedObjects(self):
         objs = {}
         for service in self.services:
-            objs[dbus.ObjectPath(service.path)] = service.get_properties()
+            objs[dbus.ObjectPath(service.get_path())] = service.get_properties()
             for char in service.characteristics:
-                objs[dbus.ObjectPath(char.path)] = char.get_properties()
+                objs[dbus.ObjectPath(char.get_path())] = char.get_properties()
         return objs
 
 
 class Advertisement(dbus.service.Object):
-    """LE Advertisement"""
-    
     def __init__(self, bus):
-        self.path = "/org/bluez/example/advertisement0"
-        super().__init__(bus, self.path)
+        super().__init__(bus, "/org/bluez/example/advertisement0")
 
     @dbus.service.method(DBUS_PROP_IFACE, in_signature="ss", out_signature="v")
     def Get(self, interface, prop):
@@ -182,7 +163,6 @@ class Advertisement(dbus.service.Object):
 
 
 def find_adapter(bus):
-    """Find BLE adapter"""
     om = dbus.Interface(bus.get_object(BLUEZ_SERVICE_NAME, "/"), DBUS_OM_IFACE)
     objects = om.GetManagedObjects()
     for path, ifaces in objects.items():
@@ -199,27 +179,25 @@ def main():
         adapter = find_adapter(bus)
         print(f"✅ Found adapter: {adapter}")
     except Exception as e:
-        print(f"❌ Failed to find adapter: {e}")
+        print(f"❌ Adapter error: {e}")
         sys.exit(1)
 
     try:
-        # Build GATT hierarchy
         app = Application(bus)
-        
         service = Service(bus, "/org/bluez/example/service0", SERVICE_UUID)
         
         state_char = ReadCharacteristic(
             bus,
             STATE_CHAR_UUID,
             ["read"],
-            service.path,
+            service.get_path(),
             "/org/bluez/example/service0/char0"
         )
         switch_char = WriteCharacteristic(
             bus,
             SWITCH_CHAR_UUID,
             ["write"],
-            service.path,
+            service.get_path(),
             "/org/bluez/example/service0/char1"
         )
         
@@ -227,26 +205,23 @@ def main():
         service.add_char(switch_char)
         app.add_service(service)
 
-        # Create advertisement
         adv = Advertisement(bus)
 
-        # Get managers
         adapter_obj = bus.get_object(BLUEZ_SERVICE_NAME, adapter)
         gatt_mgr = dbus.Interface(adapter_obj, GATT_MANAGER_IFACE)
         adv_mgr = dbus.Interface(adapter_obj, LE_ADV_MANAGER_IFACE)
 
-        # Register
-        print(f"📝 Registering application...")
+        print("📝 Registering application...")
         gatt_mgr.RegisterApplication(
-            dbus.ObjectPath(app.path),
+            dbus.ObjectPath(app.get_path()),
             {},
             timeout=10000
         )
         print("✅ Application registered")
 
-        print(f"📝 Registering advertisement...")
+        print("📝 Registering advertisement...")
         adv_mgr.RegisterAdvertisement(
-            dbus.ObjectPath(adv.path),
+            dbus.ObjectPath(adv.get_path()),
             {},
             timeout=10000
         )
