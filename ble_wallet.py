@@ -189,11 +189,20 @@ def main():
         LE_ADV_MANAGER_IFACE,
     )
 
-    gatt_mgr.RegisterApplication(app.PATH, {})
-    adv_mgr.RegisterAdvertisement(adv.PATH, {})
+    try:
+        gatt_mgr.RegisterApplication(app.PATH, {})
+        adv_mgr.RegisterAdvertisement(adv.PATH, {})
 
-    print("✅ NFC-Wallet-Dev is advertising")
-    GLib.MainLoop().run()
+        print("✅ NFC-Wallet-Dev is advertising")
+        GLib.MainLoop().run()
+    except dbus.exceptions.DBusException as e:
+        print(f"❌ DBus Error: {e}")
+        print("Troubleshooting tips:")
+        print("1. Make sure BlueZ is running: systemctl status bluetooth")
+        print("2. Check BLE adapter is up: sudo hciconfig hci0 up")
+        print("3. Run as sudo: sudo python3 ble_wallet.py")
+        import sys
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
